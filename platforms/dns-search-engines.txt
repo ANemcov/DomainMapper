@@ -1,5 +1,5 @@
 ﻿ya.ru
-yandex.ru
-www.google.com
-www.google.ru
-www.bing.com
+google.com
+google.ru
+bing.com
+yahoo.com

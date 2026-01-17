@@ -47,7 +47,7 @@ exit /b 0
 
 REM Проверка и установка необходимых модулей Python
 :CheckModules
-set "modules=dnspython httpx colorama tqdm"
+set "modules=requests dnspython ipaddress configparser httpx colorama"
 echo.
 echo Проверка необходимых библиотек...
 
@@ -65,48 +65,49 @@ for %%m in (%modules%) do (
 
 goto :DownloadMain
 
-REM Загрузка и запуск main.py
+REM Загрузка и запуск convert.py
 :DownloadMain
-echo Загрузка Domain Mapper...
-powershell -Command "if ($PSVersionTable.PSVersion.Major -ge 3) {Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/Ground-Zerro/DomainMapper/main/main.py' -OutFile 'main.py'} else {Start-BitsTransfer -Source 'https://raw.githubusercontent.com/Ground-Zerro/DomainMapper/main/main.py' -Destination 'main.py'}"
+echo Загрузка Domain Mapper Converter...
+powershell -Command "if ($PSVersionTable.PSVersion.Major -ge 3) {Invoke-WebRequest -Uri 'https://github.com/Ground-Zerro/DomainMapper/raw/refs/heads/main/utilities/convert.py' -OutFile 'convert.py'} else {Start-BitsTransfer -Source 'https://raw.githubusercontent.com/Ground-Zerro/DomainMapper/main/utilities/convert.py' -Destination 'convert.py'}"
 
-if not exist "main.py" (
-    echo Ошибка загрузки Domain Mapper.
+if not exist "convert.py" (
+    echo Ошибка загрузки Domain Mapper Converter.
     pause
     exit /b 1
+)
+
+if not exist "ip.txt" (
+    echo.
+    echo Файл ip.txt не найден.
+    echo Создайте файл ip.txt в текущей директории и добавьте в него IP-адреса.
+    echo.
+    choice /C YN /M "Создать пустой файл ip.txt сейчас?"
+    if ERRORLEVEL 2 (
+        echo Завершение работы.
+        del /q /f convert.py
+        pause
+        exit /b 1
+    ) else (
+        echo. > ip.txt
+        echo Файл ip.txt создан. Добавьте в него IP-адреса и запустите скрипт снова.
+        del /q /f convert.py
+        pause
+        exit /b 0
+    )
 )
 
 cls
-REM Запуск main.py
 echo Запускаем...
-python main.py
+python convert.py
 if ERRORLEVEL 1 (
-    echo Ошибка выполнения main.py.
+    echo Ошибка выполнения convert.py.
     pause
-    del /q /f main.py
+    del /q /f convert.py
     exit /b 1
 )
 
-echo Копирование файлов на рабочий стол...
-
-if exist domain-ip-resolve.txt (
-    move /y domain-ip-resolve.txt %UserProfile%\Desktop\domain-ip-resolve.txt
-    echo Файл скопирован в %UserProfile%\Desktop\domain-ip-resolve.txt
-) else (
-    echo Поиск разделенных файлов...
-    set "found=0"
-    for %%f in (domain-ip-resolve_p*.txt) do (
-        move /y "%%f" "%UserProfile%\Desktop\%%f"
-        echo Файл %%f скопирован на рабочий стол
-        set "found=1"
-    )
-    if "!found!"=="0" (
-        echo Не найдено файлов для копирования.
-    )
-)
-
 echo Программа завершена.
-del /q /f main.py
+del /q /f convert.py
 endlocal
 pause
 exit /b 0

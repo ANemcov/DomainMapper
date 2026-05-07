@@ -173,6 +173,41 @@ curl -L -s "https://raw.githubusercontent.com/Ground-Zerro/DomainMapper/refs/hea
 </details>
 
 
+---
+
+### Утилита объединения маршрутов `merge_routes.py`
+
+Объединяет несколько файлов с маршрутами в один, убирая дубли и поглощая подсети более крупными сетями.
+
+**Использование:**
+
+```bash
+python merge_routes.py domain-ip-custom.txt domain-ip-youtube.txt domain-ip-resolve.txt -o merged-routes.txt
+```
+
+По умолчанию результат сохраняется в `merged-routes.txt`. Чтобы указать другой файл:
+
+```bash
+python merge_routes.py file1.txt file2.txt -o result.txt
+```
+
+**Примеры:**
+
+```bash
+# Объединить три файла, результат в merged-routes.txt
+python merge_routes.py domain-ip-custom.txt domain-ip-youtube.txt domain-ip-resolve.txt
+
+# Объединить два файла, указать имя выходного файла
+python merge_routes.py domain-ip-youtube.txt domain-ip-resolve.txt -o routes-combined.txt
+```
+
+**Логика обработки:**
+- Точные дубли убираются.
+- Если одна сеть является подсетью другой (например, `192.168.1.0/24` входит в `192.168.0.0/16`), в результат попадает только более крупная (`/16`).
+- Комментарий (`!ServiceName`) сохраняется от той записи, которая попала в итоговый список.
+
+---
+
 # ☕ Поддержка
 
 Если проект оказался Вам полезен — можно поблагодарить автора:

@@ -3,9 +3,17 @@ import asyncio
 import configparser
 import ipaddress
 import os
+import sys
 import time
 from collections import defaultdict, deque
 from typing import Dict, List, Set, Tuple, Optional
+
+def _suppress_selector_oserror(args):
+    if args.exc_type is OSError and type(getattr(args, 'object', None)).__name__ == '_SelectorTransport':
+        return
+    sys.__unraisablehook__(args)
+
+sys.unraisablehook = _suppress_selector_oserror
 
 import dns.asyncresolver
 import httpx
@@ -785,6 +793,18 @@ def process_file_format(filename, filetype, gateway, selected_service, mk_list_n
     return False
 
 async def main():
+    loop = asyncio.get_running_loop()
+
+    def _exception_handler(loop, context):
+        exc = context.get('exception')
+        if isinstance(exc, OSError) and exc.errno == 22:
+            handle = context.get('handle')
+            if handle and '_SelectorTransport' in str(handle):
+                return
+        loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_exception_handler)
+
     parser = argparse.ArgumentParser(description="DNS resolver script with custom config file.")
     parser.add_argument(
         '-c', '--config',

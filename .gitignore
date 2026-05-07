@@ -126,3 +126,5 @@ dnsdb
 domain-ip-resolve.txt
 domain-ip-resolve2.txt
 .idea
+*.ini
+*.txt

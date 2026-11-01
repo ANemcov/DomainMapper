@@ -1,4 +1,4 @@
-﻿ab.chatgpt.com
+ab.chatgpt.com
 api.openai.com
 arena.openai.com
 auth.openai.com
@@ -30,3 +30,19 @@ platform.openai.com
 spinningup.openai.com
 universe.openai.com
 chatgpt.com
+ws.chatgpt.com
+android.chat.openai.com
+desktop.chat.openai.com
+setup.auth.openai.com
+tcr9i.chat.openai.com
+cdn.platform.openai.com
+cdn.openaimerge.com
+challenges.cloudflare.com
+oaistatsig.com
+oaiusercontent.com
+cdn.workos.com
+forwarder.workos.com
+frontend-apps-multi-region.workos.com
+images.workoscdn.com
+setup.workos.com
+workos.imgix.net

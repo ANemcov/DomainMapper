@@ -1,10 +1,9 @@
 import argparse
 import ipaddress
-import sys
 
 
 def parse_route_line(line):
-    """'ip route CIDR IFACE auto !COMMENT' -> (network, iface, comment) or None"""
+    """'ip route CIDR IFACE auto !COMMENT' -> (network, iface, auto, comment)."""
     line = line.strip()
     if not line or not line.startswith('ip route '):
         return None
@@ -23,46 +22,56 @@ def parse_route_line(line):
 
 
 def merge_routes(files):
-    routes = {}  # network -> (iface, auto, comment)
+    groups = {}
     per_file_counts = []
 
     for filepath in files:
         count = 0
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                for line in f:
-                    result = parse_route_line(line)
-                    if result:
-                        count += 1
-                        if result[0] not in routes:
-                            net, iface, auto, comment = result
-                            routes[net] = (iface, auto, comment)
-        except Exception as e:
-            print(f"Ошибка чтения {filepath}: {e}", file=sys.stderr)
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            for line in f:
+                result = parse_route_line(line)
+                if result:
+                    count += 1
+                    net, iface, auto, comment = result
+                    key = (net.version, iface, auto)
+                    groups.setdefault(key, {}).setdefault(net, comment)
+        if not count:
+            raise ValueError(f"В файле {filepath} нет маршрутов")
         per_file_counts.append((filepath, count))
 
-    # Сортируем по длине префикса по возрастанию (сначала крупные сети)
-    all_networks = sorted(routes.keys(), key=lambda n: n.prefixlen)
+    merged = []
+    for (_, iface, auto), routes in groups.items():
+        originals = iter(sorted(routes, key=lambda n: (int(n.network_address), n.prefixlen)))
+        original = next(originals, None)
+        for net in ipaddress.collapse_addresses(routes):
+            comments = []
+            while original is not None and original.network_address <= net.broadcast_address:
+                for label in routes[original].lstrip('!').split(','):
+                    if label and label not in comments:
+                        comments.append(label)
+                original = next(originals, None)
+            comment = '!' + ','.join(comments) if comments else ''
+            merged.append((net, (iface, auto, comment)))
 
-    kept = []
-    for net in all_networks:
-        if not any(net.subnet_of(k) for k in kept):
-            kept.append(net)
-
-    kept.sort(key=lambda n: (n.network_address, n.prefixlen))
-    return [(net, routes[net]) for net in kept], per_file_counts
+    merged.sort(key=lambda item: (
+        item[0].version, int(item[0].network_address), item[0].prefixlen, item[1]
+    ))
+    return merged, per_file_counts
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Объединяет файлы маршрутов Keenetic, убирает дубли и подсети.'
+        description='Объединяет файлы маршрутов Keenetic, убирает дубли и объединяет подсети без лишних адресов.'
     )
     parser.add_argument('files', nargs='+', help='Входные файлы маршрутов')
     parser.add_argument('-o', '--output', default='merged-routes.txt',
                         help='Выходной файл (по умолчанию: merged-routes.txt)')
     args = parser.parse_args()
 
-    routes, per_file_counts = merge_routes(args.files)
+    try:
+        routes, per_file_counts = merge_routes(args.files)
+    except (OSError, ValueError) as e:
+        parser.exit(1, f"Ошибка объединения: {e}\n")
 
     total_before = sum(c for _, c in per_file_counts)
     print("Входные файлы:")
@@ -77,7 +86,7 @@ def main():
 
     total_after = len(routes)
     print(f"Результат: {total_after} записей → {args.output}")
-    print(f"Удалено: {total_before - total_after} записей (дубли и покрытые подсети)")
+    print(f"Удалено: {total_before - total_after} записей (дубли, покрытые и смежные подсети)")
 
 
 if __name__ == '__main__':

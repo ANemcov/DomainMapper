@@ -3,6 +3,7 @@ import asyncio
 import configparser
 import ipaddress
 import os
+import subprocess
 import sys
 import time
 from collections import defaultdict, deque
@@ -220,8 +221,7 @@ def read_config(cfg_file):
         return service, rate_limit, filename, cloudflare, filetype, gateway, run_command, dns_server_indices, mk_list_name, subnet, ken_gateway, localplatform, localdns, mk_comment
 
     except Exception as e:
-        print(f"{yellow(f'Ошибка загрузки {cfg_file}:')} {e}\n{Style.BRIGHT}Используются настройки 'по умолчанию'.{Style.RESET_ALL}")
-        return '', 50, 'domain-ip-resolve.txt', '', '', '', '', [], '', '', '', '', '', 'off'
+        raise ValueError(f"Ошибка загрузки {cfg_file}: {e}") from e
 
 def gateway_input(gateway):
     if not gateway:
@@ -238,7 +238,7 @@ def ken_gateway_input(ken_gateway):
         return ken_gateway
 
 class DNSServerWorker:
-    def __init__(self, name: str, nameservers: List[str], rate_limit: int = 10, stats_lock=None):
+    def __init__(self, name: str, nameservers: List[str], rate_limit: int = 10, stats_lock=None, query_semaphore=None):
         self.name = name
         self.nameservers = nameservers
         self.rate_limit = rate_limit
@@ -251,6 +251,7 @@ class DNSServerWorker:
             'success': 0
         }
         self.stats_lock = stats_lock or asyncio.Lock()
+        self.query_semaphore = query_semaphore or asyncio.Semaphore(40)
         self.rate_limit_lock = asyncio.Lock()
 
     async def add_domain(self, domain: str):
@@ -333,7 +334,11 @@ class DNSServerWorker:
                     self.stats['errors'] += 1
                 return []
 
-        results = await asyncio.gather(*[process_single_domain(domain) for domain in domains], return_exceptions=True)
+        async def limited_process(domain):
+            async with self.query_semaphore:
+                return await process_single_domain(domain)
+
+        results = await asyncio.gather(*[limited_process(domain) for domain in domains], return_exceptions=True)
 
         for result in results:
             if isinstance(result, list):
@@ -429,13 +434,13 @@ async def load_dns_names(url_or_file: str) -> List[str]:
         try:
             response = await client.get(url_or_file)
             response.raise_for_status()
-            return [line.strip() for line in response.text.splitlines() if line.strip()]
+            return [line.strip() for line in response.text.lstrip("\ufeff").splitlines() if line.strip()]
         except httpx.HTTPStatusError as e:
             print(f"Ошибка при загрузке DNS имен: {e}")
             return []
     else:
         try:
-            with open(url_or_file, 'r', encoding='utf-8') as file:
+            with open(url_or_file, 'r', encoding='utf-8-sig') as file:
                 return [line.strip() for line in file.readlines() if line.strip()]
         except Exception as e:
             print(f"Ошибка при чтении файла {url_or_file}: {e}")
@@ -445,14 +450,16 @@ async def resolve_dns_with_workers(service: str, dns_names: List[str],
                                    dns_servers: List[Tuple[str, List[str]]],
                                    cloudflare_ips: Set[str], unique_ips_all_services: Set[str],
                                    stats: Dict[str, int], include_cloudflare: bool,
-                                   rate_limit: int, stats_lock: asyncio.Lock = None) -> str:
+                                   rate_limit: int, stats_lock: asyncio.Lock = None, query_semaphore=None) -> str:
     try:
         if stats_lock is None:
             stats_lock = asyncio.Lock()
+        if query_semaphore is None:
+            query_semaphore = asyncio.Semaphore(40)
 
         workers = []
         for server_name, servers in dns_servers:
-            worker = DNSServerWorker(server_name, servers, rate_limit, stats_lock)
+            worker = DNSServerWorker(server_name, servers, rate_limit, stats_lock, query_semaphore)
             workers.append(worker)
 
         for domain in dns_names:
@@ -887,6 +894,7 @@ async def main():
         await periodic_updater.start()
 
         tasks = []
+        query_semaphore = asyncio.Semaphore(40)
 
         for service_name in selected_services:
             if service_name == 'Custom DNS list':
@@ -894,7 +902,7 @@ async def main():
                     service_name, local_dns_names, selected_dns_servers,
                     cloudflare_ips, unique_ips_all_services,
                     stats, include_cloudflare, rate_limit,
-                    stats_lock
+                    stats_lock, query_semaphore
                 ))
             else:
                 url_or_file = urls[service_name]
@@ -904,19 +912,21 @@ async def main():
                         service_name, dns_names, selected_dns_servers,
                         cloudflare_ips, unique_ips_all_services,
                         stats, include_cloudflare, rate_limit,
-                        stats_lock
+                        stats_lock, query_semaphore
                     ))
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            if not any(isinstance(result, str) and result.strip() for result in results):
+                raise ValueError("Не получено ни одного IP-адреса, цепочка остановлена")
 
             with open(filename, 'w', encoding='utf-8') as file:
                 for result in results:
                     if isinstance(result, str) and result.strip():
                         file.write(result)
         else:
-            with open(filename, 'w', encoding='utf-8') as file:
-                pass
+            raise ValueError("Нет доменов для обработки, цепочка остановлена")
 
         await periodic_updater.stop()
         progress_tracker.close()
@@ -934,7 +944,10 @@ async def main():
 
         if run_command:
             print("\nВыполнение команды после завершения скрипта...")
-            os.system(run_command)
+            # Дочерний процесс использует то же окружение Python, что и текущий.
+            run_env = os.environ.copy()
+            run_env['PATH'] = os.path.dirname(sys.executable) + os.pathsep + run_env.get('PATH', '')
+            subprocess.run(run_command, shell=True, check=True, env=run_env)
         else:
             if not file_was_split:
                 print(f"\n{Style.BRIGHT}Результаты сохранены в файл:{Style.RESET_ALL}", filename)
@@ -945,8 +958,10 @@ async def main():
 
     except KeyboardInterrupt:
         print(f"\n{red('Программа прервана пользователем')}")
+        raise SystemExit(130)
     except Exception as e:
         print(f"\n{red('Критическая ошибка:')} {e}")
+        raise SystemExit(1)
     finally:
         await cleanup_http_client()
 

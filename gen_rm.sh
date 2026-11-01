@@ -1,12 +1,16 @@
 #!/bin/bash
+set -euo pipefail
 
-input=`ssh keenetic 'show ip route' | grep -i wireguard1 | grep -v '1.1.1.1' | grep -v '8.8.8.8' | grep -v '10.40.0'`
+# По умолчанию чистим Wireguard1; другой интерфейс передаётся первым аргументом.
+interface="${1:-Wireguard1}"
+# Ошибка SSH останавливает скрипт до вывода команд удаления.
+routes=$(ssh keenetic 'show ip route')
 
-# Обработка каждой строки
-echo "$input" | while read -r line; do
-    # Извлечение IP-адреса и маски
-    ip_route=$(echo "$line" | awk '{print $1}')
-    
-    # Формирование строки с "no ip route"
-    echo "no ip route $ip_route 0.0.0.0"
-done
+printf '%s\n' "$routes" | awk -v interface="$interface" '
+    $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+$/ &&
+    $2 == "0.0.0.0" && $3 == interface {
+        if ($1 == "0.0.0.0/0" || $1 == "1.1.1.1/32" ||
+            $1 == "8.8.8.8/32" || $1 == "10.40.0.0/24") next
+        if (!seen[$1]++) print "no ip route " $1 " " interface
+    }
+'
